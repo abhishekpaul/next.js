@@ -1,49 +1,38 @@
 /* eslint-env jest */
-
-import webdriver from 'next-webdriver'
 import { join } from 'path'
-import AbortController from 'abort-controller'
+import webdriver from 'next-webdriver'
+import getPort from 'get-port'
 import {
   renderViaHTTP,
-  fetchViaHTTP,
-  findPort,
-  launchApp,
   killApp,
   waitFor,
   check,
   getBrowserBodyText,
   getPageFileFromBuildManifest,
   getBuildManifest,
+  initNextServerScript,
 } from 'next-test-utils'
 
 const appDir = join(__dirname, '../')
 const context = {}
 
-const doPing = (page) => {
-  const controller = new AbortController()
-  const signal = controller.signal
-  return fetchViaHTTP(
-    context.appPort,
-    '/_next/webpack-hmr',
-    { page },
-    { signal }
-  ).then((res) => {
-    res.body.on('data', (chunk) => {
-      try {
-        const payload = JSON.parse(chunk.toString().split('data:')[1])
-        if (payload.success || payload.invalid) {
-          controller.abort()
-        }
-      } catch (_) {}
-    })
-  })
+const startServer = async (optEnv = {}, opts) => {
+  const scriptPath = join(appDir, 'server.js')
+  context.appPort = await getPort()
+  const env = Object.assign(
+    { ...process.env },
+    { PORT: `${context.appPort}` },
+    optEnv
+  )
+
+  context.server = await initNextServerScript(scriptPath, /ready on/i, env)
 }
 
-describe('On Demand Entries', () => {
+// Tests are skipped in Turbopack because they are not relevant to Turbopack.
+;(process.env.TURBOPACK ? describe.skip : describe)('On Demand Entries', () => {
   it('should pass', () => {})
   beforeAll(async () => {
-    context.appPort = await findPort()
-    context.server = await launchApp(appDir, context.appPort)
+    await startServer()
   })
   afterAll(() => {
     killApp(context.server)
@@ -53,8 +42,7 @@ describe('On Demand Entries', () => {
     // The buffer of built page uses the on-demand-entries-ping to know which pages should be
     // buffered. Therefore, we need to double each render call with a ping.
     const pageContent = await renderViaHTTP(context.appPort, '/')
-    await doPing('/')
-    expect(pageContent.includes('Index Page')).toBeTruthy()
+    expect(pageContent.includes('Index Page')).toBeTrue()
   })
 
   it('should compile pages for JSON page requests', async () => {
@@ -64,19 +52,16 @@ describe('On Demand Entries', () => {
       context.appPort,
       join('/_next', pageFile)
     )
-    expect(pageContent.includes('About Page')).toBeTruthy()
+    expect(pageContent.includes('About Page')).toBeTrue()
   })
 
   it('should dispose inactive pages', async () => {
     await renderViaHTTP(context.appPort, '/')
-    await doPing('/')
 
     // Render two pages after the index, since the server keeps at least two pages
     await renderViaHTTP(context.appPort, '/about')
-    await doPing('/about')
 
     await renderViaHTTP(context.appPort, '/third')
-    await doPing('/third')
 
     // Wait maximum of jest.setTimeout checking
     // for disposing /about

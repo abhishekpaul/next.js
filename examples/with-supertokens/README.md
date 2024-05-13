@@ -1,49 +1,42 @@
-# SuperTokens Example
+# SuperTokens App with Next.js app directory
 
-This is a simple set up for applications protected by SuperTokens.
-
-## Deploy your own
-
-Deploy the example using [Vercel](https://vercel.com):
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/git/external?repository-url=https://github.com/vercel/next.js/tree/canary/examples/with-supertokens&project-name=with-supertokens&repository-name=with-supertokens)
+This is a simple application that is protected by SuperTokens. This app uses the Next.js app directory.
 
 ## How to use
 
-- Execute [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app) with [npm](https://docs.npmjs.com/cli/init) or [Yarn](https://yarnpkg.com/lang/en/docs/cli/create/) to bootstrap the example:
+### Using `create-next-app`
+
+- Execute [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app) with [npm](https://docs.npmjs.com/cli/init), [Yarn](https://yarnpkg.com/lang/en/docs/cli/create/), or [pnpm](https://pnpm.io) to bootstrap the example:
 
 ```bash
 npx create-next-app --example with-supertokens with-supertokens-app
-# or
+```
+
+```bash
 yarn create next-app --example with-supertokens with-supertokens-app
+```
+
+```bash
+pnpm create next-app --example with-supertokens with-supertokens-app
 ```
 
 - Run `yarn install`
 
 - Run `npm run dev` to start the application on `http://localhost:3000`.
 
-## Configuration
+### Using `create-supertokens-app`
 
-> Until you do this, social login will not work. But you can still try out email password sign up / in.
+- Run the following command
 
-- Create a `.env.local` file and copy the content of `.env.local.example` into it:
+```bash
+npx create-supertokens-app@latest --frontend=next
+```
 
-  ```bash
-  cp .env.local.example .env.local
-  ```
+- Select the option to use the app directory
 
-- Fill in the values for your social login secrets
-
-## Deploy on Vercel
-
-You can deploy this app to the cloud with [Vercel](https://vercel.com?utm_source=github&utm_medium=readme&utm_campaign=next-example) ([Documentation](https://nextjs.org/docs/deployment)).
-
-### Deploy Your Local Project
-
-To deploy your local project to Vercel, push it to GitHub/GitLab/Bitbucket and [import to Vercel](https://vercel.com/new?utm_source=github&utm_medium=readme&utm_campaign=next-example).
-
-**Important**: When you import your project on Vercel, make sure to click on **Environment Variables** and set them to match your `.env.local` file.
+Follow the instructions after `create-supertokens-app` has finished
 
 ## Notes
 
-Take a look at [SuperTokens documentation](https://supertokens.io/docs/community/introduction).
+- To know more about how this app works and to learn how to customise it based on your use cases refer to the [SuperTokens Documentation](https://supertokens.com/docs/guides)
+- We have provided development OAuth keys for the various built-in third party providers in the `/app/config/backend.ts` file. Feel free to use them for development purposes, but **please create your own keys for production use**.

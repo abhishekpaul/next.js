@@ -8,7 +8,6 @@ import {
   fetchViaHTTP,
   initNextServerScript,
 } from 'next-test-utils'
-import clone from 'clone'
 import getPort from 'get-port'
 
 const appDir = join(__dirname, '../')
@@ -71,9 +70,8 @@ const startServer = async (optEnv = {}, opts) => {
   const scriptPath = join(appDir, 'server.js')
   context.appPort = appPort = await getPort()
   const env = Object.assign(
-    {},
-    clone(process.env),
-    { PORT: `${appPort}` },
+    { ...process.env },
+    { PORT: `${appPort}`, CUSTOM_SERVER: 'true' },
     optEnv
   )
 

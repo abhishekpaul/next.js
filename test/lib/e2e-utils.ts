@@ -1,18 +1,57 @@
 import path from 'path'
 import assert from 'assert'
-import { NextConfig } from 'next'
-import { NextInstance } from './next-modes/base'
+import { flushAllTraces, setGlobal, trace } from 'next/dist/trace'
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants'
+import { NextInstance, NextInstanceOpts } from './next-modes/base'
 import { NextDevInstance } from './next-modes/next-dev'
 import { NextStartInstance } from './next-modes/next-start'
+import { NextDeployInstance } from './next-modes/next-deploy'
+import { shouldRunTurboDevTest } from './next-test-utils'
 
-const testFile = module.parent.filename
+export type { NextInstance }
+
+// increase timeout to account for pnpm install time
+// if either test runs for the --turbo or have a custom timeout, set reduced timeout instead.
+// this is due to current --turbo test have a lot of tests fails with timeouts, ends up the whole
+// test job exceeds the 6 hours limit.
+let testTimeout = shouldRunTurboDevTest()
+  ? (240 * 1000) / 4
+  : (process.platform === 'win32' ? 240 : 120) * 1000
+
+if (process.env.NEXT_E2E_TEST_TIMEOUT) {
+  try {
+    testTimeout = parseInt(process.env.NEXT_E2E_TEST_TIMEOUT, 10)
+  } catch (_) {
+    // ignore
+  }
+}
+
+jest.setTimeout(testTimeout)
+
 const testsFolder = path.join(__dirname, '..')
+
+let testFile
+const testFileRegex = /\.test\.(js|tsx?)/
+
+const visitedModules = new Set()
+const checkParent = (mod) => {
+  if (!mod?.parent || visitedModules.has(mod)) return
+  testFile = mod.parent.filename || ''
+  visitedModules.add(mod)
+
+  if (!testFileRegex.test(testFile)) {
+    checkParent(mod.parent)
+  }
+}
+checkParent(module)
+
+process.env.TEST_FILE_PATH = testFile
 
 let testMode = process.env.NEXT_TEST_MODE
 
-if (!testFile.match(/\.test\.(js|tsx?)/)) {
+if (!testFileRegex.test(testFile)) {
   throw new Error(
-    'e2e-utils imported from non-test file (must end with .test.(js,ts,tsx)'
+    `e2e-utils imported from non-test file ${testFile} (must end with .test.(js,ts,tsx)`
   )
 }
 
@@ -25,8 +64,10 @@ const testModeFromFile = testFolderModes.find((mode) =>
 if (testModeFromFile === 'e2e') {
   const validE2EModes = ['dev', 'start', 'deploy']
 
-  if (!process.env.NEXT_TEST_JOB) {
-    console.warn('Warn: no NEXT_TEST_MODE set, using default of start')
+  if (!process.env.NEXT_TEST_JOB && !testMode) {
+    require('console').warn(
+      'Warn: no NEXT_TEST_MODE set, using default of start'
+    )
     testMode = 'start'
   }
   assert(
@@ -42,17 +83,37 @@ if (testModeFromFile === 'e2e') {
 }
 
 if (testMode === 'dev') {
-  ;(global as any).isDev = true
+  ;(global as any).isNextDev = true
 } else if (testMode === 'deploy') {
-  ;(global as any).isDeploy = true
+  ;(global as any).isNextDeploy = true
+} else {
+  ;(global as any).isNextStart = true
 }
+
+/**
+ * Whether the test is running in development mode.
+ * Based on `process.env.NEXT_TEST_MODE` and the test directory.
+ */
+export const isNextDev = testMode === 'dev'
+/**
+ * Whether the test is running in deploy mode.
+ * Based on `process.env.NEXT_TEST_MODE`.
+ */
+export const isNextDeploy = testMode === 'deploy'
+/**
+ * Whether the test is running in start mode.
+ * Default mode. `true` when both `isNextDev` and `isNextDeploy` are false.
+ */
+export const isNextStart = !isNextDev && !isNextDeploy
 
 if (!testMode) {
   throw new Error(
     `No 'NEXT_TEST_MODE' set in environment, this is required for e2e-utils`
   )
 }
-console.log(`Using test mode: ${testMode} in test folder ${testModeFromFile}`)
+require('console').warn(
+  `Using test mode: ${testMode} in test folder ${testModeFromFile}`
+)
 
 /**
  * FileRef is wrapper around a file path that is meant be copied
@@ -79,44 +140,159 @@ if (typeof afterAll === 'function') {
   })
 }
 
+const setupTracing = () => {
+  if (!process.env.NEXT_TEST_TRACE) return
+
+  setGlobal('distDir', './test/.trace')
+  // This is a hacky way to use tracing utils even for tracing test utils.
+  // We want the same treatment as DEVELOPMENT_SERVER - adds a reasonable treshold for logs size.
+  setGlobal('phase', PHASE_DEVELOPMENT_SERVER)
+}
+
 /**
  * Sets up and manages a Next.js instance in the configured
  * test mode. The next instance will be isolated from the monorepo
  * to prevent relying on modules that shouldn't be
  */
-export async function createNext(opts: {
-  files: {
-    [filename: string]: string | FileRef
-  }
-  dependencies?: {
-    [name: string]: string
-  }
-  nextConfig?: NextConfig
-  skipStart?: boolean
-}): Promise<NextInstance> {
-  if (nextInstance) {
-    throw new Error(`createNext called without destroying previous instance`)
-  }
+export async function createNext(
+  opts: NextInstanceOpts & { skipStart?: boolean }
+): Promise<NextInstance> {
+  try {
+    if (nextInstance) {
+      throw new Error(`createNext called without destroying previous instance`)
+    }
 
-  if (testMode === 'dev') {
-    // next dev
-    nextInstance = new NextDevInstance(opts)
-  } else if (testMode === 'deploy') {
-    // Vercel
-    throw new Error('to-implement')
-  } else {
-    // next build + next start
-    nextInstance = new NextStartInstance(opts)
-  }
+    setupTracing()
+    return await trace('createNext').traceAsyncFn(async (rootSpan) => {
+      const useTurbo = !!process.env.TEST_WASM
+        ? false
+        : opts?.turbo ?? shouldRunTurboDevTest()
 
-  nextInstance.on('destroy', () => {
+      if (testMode === 'dev') {
+        // next dev
+        rootSpan.traceChild('init next dev instance').traceFn(() => {
+          nextInstance = new NextDevInstance({
+            ...opts,
+            turbo: useTurbo,
+          })
+        })
+      } else if (testMode === 'deploy') {
+        // Vercel
+        rootSpan.traceChild('init next deploy instance').traceFn(() => {
+          nextInstance = new NextDeployInstance({
+            ...opts,
+            turbo: false,
+          })
+        })
+      } else {
+        // next build + next start
+        rootSpan.traceChild('init next start instance').traceFn(() => {
+          nextInstance = new NextStartInstance({
+            ...opts,
+            turbo: false,
+          })
+        })
+      }
+
+      nextInstance.on('destroy', () => {
+        nextInstance = undefined
+      })
+
+      await nextInstance.setup(rootSpan)
+
+      if (!opts.skipStart) {
+        await rootSpan
+          .traceChild('start next instance')
+          .traceAsyncFn(async () => {
+            await nextInstance.start()
+          })
+      }
+
+      return nextInstance!
+    })
+  } catch (err) {
+    require('console').error('Failed to create next instance', err)
+    try {
+      await nextInstance?.destroy()
+    } catch (_) {}
+
     nextInstance = undefined
+    // Throw instead of process exit to ensure that Jest reports the tests as failed.
+    throw err
+  } finally {
+    flushAllTraces()
+  }
+}
+
+export function nextTestSetup(
+  options: Parameters<typeof createNext>[0] & {
+    skipDeployment?: boolean
+    dir?: string
+  }
+): {
+  isNextDev: boolean
+  isNextDeploy: boolean
+  isNextStart: boolean
+  isTurbopack: boolean
+  next: NextInstance
+  skipped: boolean
+} {
+  let skipped = false
+
+  if (options.skipDeployment) {
+    // When the environment is running for deployment tests.
+    if (isNextDeploy) {
+      // eslint-disable-next-line jest/no-focused-tests
+      it.only('should skip next deploy', () => {})
+      // No tests are run.
+      skipped = true
+    }
+  }
+
+  let next: NextInstance | undefined
+  if (!skipped) {
+    beforeAll(async () => {
+      next = await createNext(options)
+    })
+    afterAll(async () => {
+      // Gracefully destroy the instance if `createNext` success.
+      // If next instance is not available, it's likely beforeAll hook failed and unnecessarily throws another error
+      // by attempting to destroy on undefined.
+      await next?.destroy()
+    })
+  }
+
+  const nextProxy = new Proxy<NextInstance>({} as NextInstance, {
+    get: function (_target, property) {
+      if (!next) {
+        throw new Error(
+          'next instance is not initialized yet, make sure you call methods on next instance in test body.'
+        )
+      }
+      const prop = next[property]
+      return typeof prop === 'function' ? prop.bind(next) : prop
+    },
   })
 
-  await nextInstance.setup()
+  return {
+    get isNextDev() {
+      return isNextDev
+    },
+    get isTurbopack(): boolean {
+      return Boolean(
+        !process.env.TEST_WASM && (options.turbo ?? shouldRunTurboDevTest())
+      )
+    },
 
-  if (!opts.skipStart) {
-    await nextInstance.start()
+    get isNextDeploy() {
+      return isNextDeploy
+    },
+    get isNextStart() {
+      return isNextStart
+    },
+    get next() {
+      return nextProxy
+    },
+    skipped,
   }
-  return nextInstance!
 }

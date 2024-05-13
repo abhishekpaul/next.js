@@ -3,11 +3,13 @@
 import fs from 'fs-extra'
 import { join } from 'path'
 import cheerio from 'cheerio'
+import stripAnsi from 'next/dist/compiled/strip-ansi'
 import {
   renderViaHTTP,
   findPort,
   launchApp,
   killApp,
+  nextBuild,
   check,
 } from 'next-test-utils'
 
@@ -20,7 +22,7 @@ async function get$(path, query) {
   return cheerio.load(html)
 }
 
-describe('TypeScript Features', () => {
+describe('jsconfig.json baseurl', () => {
   describe('default behavior', () => {
     let output = ''
 
@@ -46,19 +48,48 @@ describe('TypeScript Features', () => {
       const basicPage = join(appDir, 'pages/hello.js')
       const contents = await fs.readFile(basicPage, 'utf8')
 
-      await fs.writeFile(
-        basicPage,
-        contents.replace('components/world', 'components/worldd')
-      )
-      await renderViaHTTP(appPort, '/hello')
+      try {
+        await fs.writeFile(
+          basicPage,
+          contents.replace('components/world', 'components/worldd')
+        )
 
-      const found = await check(
-        () => output,
-        /Module not found: Can't resolve 'components\/worldd'/,
-        false
-      )
-      await fs.writeFile(basicPage, contents)
-      expect(found).toBe(true)
+        const found = await check(
+          async () => {
+            await renderViaHTTP(appPort, '/hello')
+            return stripAnsi(output)
+          },
+          /Module not found: Can't resolve 'components\/worldd'/,
+          false
+        )
+        expect(found).toBe(true)
+      } finally {
+        await fs.writeFile(basicPage, contents)
+      }
     })
+  })
+
+  describe('should build', () => {
+    ;(process.env.TURBOPACK_DEV ? describe.skip : describe)(
+      'production mode',
+      () => {
+        beforeAll(async () => {
+          await nextBuild(appDir)
+        })
+        it('should trace correctly', async () => {
+          const helloTrace = await fs.readJSON(
+            join(appDir, '.next/server/pages/hello.js.nft.json')
+          )
+          expect(
+            helloTrace.files.some((file) =>
+              file.includes('components/world.js')
+            )
+          ).toBe(false)
+          expect(
+            helloTrace.files.some((file) => file.includes('react/index.js'))
+          ).toBe(true)
+        })
+      }
+    )
   })
 })

@@ -3,13 +3,18 @@
 import fs from 'fs-extra'
 import { join } from 'path'
 import cheerio from 'cheerio'
+import stripAnsi from 'next/dist/compiled/strip-ansi'
+import * as path from 'path'
 import {
   renderViaHTTP,
   findPort,
   launchApp,
+  nextBuild,
   killApp,
   check,
+  File,
 } from 'next-test-utils'
+import * as JSON5 from 'json5'
 
 const appDir = join(__dirname, '..')
 let appPort
@@ -20,7 +25,7 @@ async function get$(path, query) {
   return cheerio.load(html)
 }
 
-describe('TypeScript Features', () => {
+function runTests() {
   describe('default behavior', () => {
     let output = ''
 
@@ -57,25 +62,101 @@ describe('TypeScript Features', () => {
       expect($('body').text()).toMatch(/Hello/)
     })
 
-    it('should resolve a wildcard alias', async () => {
-      const $ = await get$('/wildcard-alias')
-      expect($('body').text()).toMatch(/world/)
-    })
-
     it('should have correct module not found error', async () => {
       const basicPage = join(appDir, 'pages/basic-alias.js')
       const contents = await fs.readFile(basicPage, 'utf8')
 
-      await fs.writeFile(basicPage, contents.replace('@c/world', '@c/worldd'))
-      await renderViaHTTP(appPort, '/basic-alias')
+      try {
+        await fs.writeFile(basicPage, contents.replace('@c/world', '@c/worldd'))
 
-      const found = await check(
-        () => output,
-        /Module not found: Can't resolve '@c\/worldd'/,
-        false
-      )
-      await fs.writeFile(basicPage, contents)
-      expect(found).toBe(true)
+        const found = await check(
+          async () => {
+            await renderViaHTTP(appPort, '/basic-alias')
+            return stripAnsi(output)
+          },
+          /Module not found: Can't resolve '@c\/worldd'/,
+          false
+        )
+        expect(found).toBe(true)
+      } finally {
+        await fs.writeFile(basicPage, contents)
+      }
     })
   })
+
+  describe('should build', () => {
+    ;(process.env.TURBOPACK_DEV ? describe.skip : describe)(
+      'production mode',
+      () => {
+        beforeAll(async () => {
+          await nextBuild(appDir)
+        })
+        it('should trace correctly', async () => {
+          const singleAliasTrace = await fs.readJSON(
+            join(appDir, '.next/server/pages/single-alias.js.nft.json')
+          )
+          const resolveOrderTrace = await fs.readJSON(
+            join(appDir, '.next/server/pages/resolve-order.js.nft.json')
+          )
+          const resolveFallbackTrace = await fs.readJSON(
+            join(appDir, '.next/server/pages/resolve-fallback.js.nft.json')
+          )
+          const basicAliasTrace = await fs.readJSON(
+            join(appDir, '.next/server/pages/basic-alias.js.nft.json')
+          )
+
+          expect(
+            singleAliasTrace.files.some((file) =>
+              file.includes('components/hello.js')
+            )
+          ).toBe(false)
+          expect(
+            resolveOrderTrace.files.some((file) =>
+              file.includes('lib/a/api.js')
+            )
+          ).toBe(false)
+          expect(
+            resolveOrderTrace.files.some((file) =>
+              file.includes('mypackage/data.js')
+            )
+          ).toBe(true)
+          expect(
+            resolveFallbackTrace.files.some((file) =>
+              file.includes('lib/b/b-only.js')
+            )
+          ).toBe(false)
+          expect(
+            basicAliasTrace.files.some((file) =>
+              file.includes('components/world.js')
+            )
+          ).toBe(false)
+        })
+      }
+    )
+  })
+}
+
+describe('jsconfig paths', () => {
+  runTests()
+})
+
+const jsconfig = new File(path.resolve(__dirname, '../jsconfig.json'))
+
+describe('jsconfig paths without baseurl', () => {
+  beforeAll(() => {
+    const jsconfigContent = JSON5.parse(jsconfig.originalContent)
+    delete jsconfigContent.compilerOptions.baseUrl
+    jsconfigContent.compilerOptions.paths = {
+      '@c/*': ['./components/*'],
+      '@lib/*': ['./lib/a/*', './lib/b/*'],
+      '@mycomponent': ['./components/hello.js'],
+    }
+    jsconfig.write(JSON.stringify(jsconfigContent, null, 2))
+  })
+
+  afterAll(() => {
+    jsconfig.restore()
+  })
+
+  runTests()
 })

@@ -1,18 +1,14 @@
-// types only import
-import {
+import type {
   Compiler as WebpackCompiler,
   Template as WebpackTemplate,
-  // @ts-ignore exists in webpack 5
   RuntimeModule as WebpackRuntimeModule,
-  // @ts-ignore exists in webpack 5
   RuntimeGlobals as WebpackRuntimeGlobals,
-  // @ts-ignore exists in webpack 5
-  compilation as WebpackCompilation,
+  Compilation as WebpackCompilation,
 } from 'webpack'
 
 // Shared between webpack 4 and 5:
 function injectRefreshFunctions(
-  compilation: WebpackCompilation.Compilation,
+  compilation: WebpackCompilation,
   Template: typeof WebpackTemplate
 ) {
   const hookVars: any = (compilation.mainTemplate.hooks as any).localVars
@@ -97,8 +93,7 @@ function webpack5(this: ReactFreshWebpackPlugin, compiler: WebpackCompiler) {
     }
 
     generate() {
-      // @ts-ignore This exists in webpack 5
-      const { runtimeTemplate } = this.compilation
+      const { runtimeTemplate } = this.compilation!
       return Template.asString([
         `if (${RuntimeGlobals.interceptModuleExecution}) {`,
         `${
@@ -142,11 +137,9 @@ function webpack5(this: ReactFreshWebpackPlugin, compiler: WebpackCompiler) {
   compiler.hooks.compilation.tap('ReactFreshWebpackPlugin', (compilation) => {
     injectRefreshFunctions(compilation, Template)
 
-    // @ts-ignore Exists in webpack 5
     compilation.hooks.additionalTreeRuntimeRequirements.tap(
       'ReactFreshWebpackPlugin',
       (chunk: any) => {
-        // @ts-ignore Exists in webpack 5
         compilation.addRuntimeModule(chunk, new ReactRefreshRuntimeModule())
       }
     )

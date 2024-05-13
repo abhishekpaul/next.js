@@ -9,6 +9,7 @@
 }
 
 .main {
+  width: 100%;
   max-width: 540px;
   padding-top: 2rem;
   flex: 1;
@@ -59,14 +60,16 @@
 }
 
 .cards {
-  margin: 2rem 0;
+  margin: 0;
 }
 
 .card {
   min-height: 135px;
   border: 2px solid #fff;
   border-radius: 0.5em;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .card:empty {
@@ -88,18 +91,31 @@
 
   background-repeat: repeat-y;
 
-  background-size: 100px 200px, /* circle */ 50px 200px,
-    /* highlight */ 150px 200px, 350px 200px, 200px 200px;
+  background-size:
+    100px 200px,
+    /* circle */ 50px 200px,
+    /* highlight */ 150px 200px,
+    350px 200px,
+    200px 200px;
 
-  background-position: 0 0, /* circle */ 0 0, /* highlight */ 70px 36px,
-    70px 58px, 70px 80px;
+  background-position:
+    0 0,
+    /* circle */ 0 0,
+    /* highlight */ 70px 36px,
+    70px 58px,
+    70px 80px;
 
   animation: shine 1s infinite;
 }
 
 @keyframes shine {
   to {
-    background-position: 0 0, 100% 0, 70px 36px, 70px 58px, 70px 80px;
+    background-position:
+      0 0,
+      100% 0,
+      70px 36px,
+      70px 58px,
+      70px 80px;
   }
 }
 
@@ -118,6 +134,8 @@
 }
 
 .cardContent {
+  background: transparent;
+  border: none;
   display: grid;
   grid-template-columns: 24px 1fr;
   gap: 1em;
@@ -186,11 +204,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    height: 100%;
   }
 
   .cardContent {
     grid-template-columns: 24px 1fr 42px;
     padding: 2em;
+    cursor: pointer;
+    font: inherit;
   }
 
   .links {
@@ -211,4 +232,22 @@
   .linkText:hover {
     border-bottom: 2px solid #335bf1;
   }
+}
+
+.backend {
+  margin-bottom: 4rem;
+}
+.backend h2 {
+  text-align: center;
+}
+.backend h4 {
+  margin-bottom: 0;
+}
+.backend h4 em {
+  font-weight: normal;
+  margin-left: 0.5rem;
+}
+.backend pre {
+  font-size: 80%;
+  border-radius: 0.5rem;
 }

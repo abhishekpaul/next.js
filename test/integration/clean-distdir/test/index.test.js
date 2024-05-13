@@ -7,6 +7,7 @@ import { nextBuild } from 'next-test-utils'
 const appDir = join(__dirname, '../')
 const customFile = join(appDir, '.next/extra-file.txt')
 const cacheDir = join(appDir, '.next/cache')
+// const swcCacheDir = join(appDir, '.next/cache/swc')
 const nextConfig = join(appDir, 'next.config.js')
 
 let nextConfigContent
@@ -18,6 +19,7 @@ async function checkFileWrite(existsAfterBuild) {
   expect(fs.existsSync(customFile)).toBe(existsAfterBuild)
   // `.next/cache` should be preserved in all cases
   expect(fs.existsSync(cacheDir)).toBe(true)
+  // expect(fs.existsSync(swcCacheDir)).toBe(true)
 }
 
 const runTests = () => {
@@ -27,47 +29,31 @@ const runTests = () => {
 }
 
 describe('Cleaning distDir', () => {
-  describe('server mode', () => {
-    runTests()
-  })
+  ;(process.env.TURBOPACK_DEV ? describe.skip : describe)(
+    'production mode',
+    () => {
+      runTests()
 
-  describe('serverless mode', () => {
-    beforeAll(async () => {
-      nextConfigContent = await fs.readFile(nextConfig, 'utf8')
-      await fs.writeFile(
-        nextConfig,
+      describe('disabled write', () => {
+        beforeAll(async () => {
+          nextConfigContent = await fs.readFile(nextConfig, 'utf8')
+          await fs.writeFile(
+            nextConfig,
+            `
+          module.exports = {
+            cleanDistDir: false
+          }
         `
-        module.exports = {
-          target: 'serverless'
-        }
-      `
-      )
-    })
-    afterAll(async () => {
-      await fs.writeFile(nextConfig, nextConfigContent)
-    })
+          )
+        })
+        afterAll(async () => {
+          await fs.writeFile(nextConfig, nextConfigContent)
+        })
 
-    runTests()
-  })
-
-  describe('disabled write', () => {
-    beforeAll(async () => {
-      nextConfigContent = await fs.readFile(nextConfig, 'utf8')
-      await fs.writeFile(
-        nextConfig,
-        `
-        module.exports = {
-          cleanDistDir: false
-        }
-      `
-      )
-    })
-    afterAll(async () => {
-      await fs.writeFile(nextConfig, nextConfigContent)
-    })
-
-    it('should not clean up .next before build start', async () => {
-      await checkFileWrite(true)
-    })
-  })
+        it('should not clean up .next before build start', async () => {
+          await checkFileWrite(true)
+        })
+      })
+    }
+  )
 })

@@ -8,6 +8,7 @@ import {
   findPort,
   killApp,
   launchApp,
+  check,
 } from 'next-test-utils'
 
 const appDir = path.join(__dirname, '..')
@@ -33,15 +34,17 @@ const runTests = () => {
 
   it('Refreshes query on mount', async () => {
     const browser = await webdriver(appPort, '/post-1')
+    await check(() => browser.eval('document.body.innerHTML'), /post.*post-1/)
     const html = await browser.eval('document.body.innerHTML')
-    expect(html).toMatch(/post.*post-1/)
     expect(html).toMatch(/nextExport/)
   })
 
   it('should update asPath after mount', async () => {
     const browser = await webdriver(appPort, '/zeit/cmnt-2')
-    const html = await browser.eval(`document.documentElement.innerHTML`)
-    expect(html).toMatch(/\/zeit\/cmnt-2/)
+    await check(
+      () => browser.eval(`document.documentElement.innerHTML`),
+      /\/zeit\/cmnt-2/
+    )
   })
 
   it('should not replace URL with page name while asPath is delayed', async () => {
@@ -54,19 +57,22 @@ const runTests = () => {
 }
 
 describe('Auto Export', () => {
-  describe('production', () => {
-    beforeAll(async () => {
-      await nextBuild(appDir)
-      appPort = await findPort()
-      app = await nextStart(appDir, appPort)
-    })
+  ;(process.env.TURBOPACK_DEV ? describe.skip : describe)(
+    'production mode',
+    () => {
+      beforeAll(async () => {
+        await nextBuild(appDir)
+        appPort = await findPort()
+        app = await nextStart(appDir, appPort)
+      })
 
-    afterAll(async () => {
-      await killApp(app)
-    })
+      afterAll(async () => {
+        await killApp(app)
+      })
 
-    runTests()
-  })
+      runTests()
+    }
+  )
 
   describe('dev', () => {
     beforeAll(async () => {
@@ -82,6 +88,23 @@ describe('Auto Export', () => {
       const browser = await webdriver(appPort, '/zeit/cmnt-1')
       const caughtWarns = await browser.eval(`window.caughtWarns`)
       expect(caughtWarns).toEqual([])
+    })
+
+    it('should include error link when hydration error does occur', async () => {
+      const browser = await webdriver(appPort, '/post-1/hydrate-error', {
+        pushErrorAsConsoleLog: true,
+      })
+      const logs = await browser.log()
+      expect(logs).toEqual(
+        expect.arrayContaining([
+          {
+            message: expect.stringContaining(
+              'https://react.dev/link/hydration-mismatch'
+            ),
+            source: 'error',
+          },
+        ])
+      )
     })
   })
 })

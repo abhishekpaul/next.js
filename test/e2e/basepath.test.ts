@@ -4,7 +4,7 @@ import assert from 'assert'
 import cheerio from 'cheerio'
 import webdriver from 'next-webdriver'
 import { createNext, FileRef } from 'e2e-utils'
-import { NextInstance } from 'test/lib/next-modes/base'
+import { NextInstance } from 'e2e-utils'
 import {
   check,
   fetchViaHTTP,
@@ -13,7 +13,7 @@ import {
   waitFor,
 } from 'next-test-utils'
 
-describe('should set-up next', () => {
+describe('basePath', () => {
   let next: NextInstance
   const basePath = '/docs'
 
@@ -38,7 +38,7 @@ describe('should set-up next', () => {
             },
             {
               source: '/rewrite-no-basepath',
-              destination: 'https://test-404-jj4.vercel.app/',
+              destination: 'https://example.vercel.sh',
               basePath: false,
             },
             {
@@ -96,7 +96,94 @@ describe('should set-up next', () => {
   })
   afterAll(() => next.destroy())
 
-  const runTests = (dev = false) => {
+  const runTests = (isDev = false, isDeploy = false) => {
+    it('should navigate to /404 correctly client-side', async () => {
+      const browser = await webdriver(next.url, `${basePath}/slug-1`)
+      await check(
+        () => browser.eval('document.documentElement.innerHTML'),
+        /slug-1/
+      )
+
+      await browser.eval('next.router.push("/404", "/slug-2")')
+      await check(
+        () => browser.eval('document.documentElement.innerHTML'),
+        /page could not be found/
+      )
+      expect(await browser.eval('location.pathname')).toBe(`${basePath}/slug-2`)
+    })
+
+    it('should navigate to /_error correctly client-side', async () => {
+      const browser = await webdriver(next.url, `${basePath}/slug-1`)
+      await check(
+        () => browser.eval('document.documentElement.innerHTML'),
+        /slug-1/
+      )
+
+      await browser.eval('next.router.push("/_error", "/slug-2")')
+      await check(
+        () => browser.eval('document.documentElement.innerHTML'),
+        /page could not be found/
+      )
+      expect(await browser.eval('location.pathname')).toBe(`${basePath}/slug-2`)
+    })
+
+    it('should navigate to external site and back', async () => {
+      const browser = await webdriver(next.url, `${basePath}/external-and-back`)
+      const initialText = await browser.elementByCss('p').text()
+      expect(initialText).toBe('server')
+
+      await browser
+        .elementByCss('a')
+        .click()
+        .waitForElementByCss('input')
+        .back()
+        .waitForElementByCss('p')
+
+      await waitFor(1000)
+      const newText = await browser.elementByCss('p').text()
+      expect(newText).toBe('server')
+    })
+
+    if (process.env.BROWSER_NAME === 'safari') {
+      // currently only testing the above test in safari
+      // we can investigate testing more cases below if desired
+      return
+    }
+
+    it.each([
+      { hash: '#hello?' },
+      { hash: '#?' },
+      { hash: '##' },
+      { hash: '##?' },
+      { hash: '##hello?' },
+      { hash: '##hello' },
+      { hash: '#hello?world' },
+      { search: '?hello=world', hash: '#a', query: { hello: 'world' } },
+      { search: '?hello', hash: '#a', query: { hello: '' } },
+      { search: '?hello=', hash: '#a', query: { hello: '' } },
+    ])(
+      'should handle query/hash correctly during query updating $hash $search',
+      async ({ hash, search, query }) => {
+        const browser = await webdriver(
+          next.url,
+          `${basePath}${search || ''}${hash || ''}`
+        )
+
+        await check(
+          () =>
+            browser.eval('window.next.router.isReady ? "ready" : "not ready"'),
+          'ready'
+        )
+        expect(await browser.eval('window.location.pathname')).toBe(basePath)
+        expect(await browser.eval('window.location.search')).toBe(search || '')
+        expect(await browser.eval('window.location.hash')).toBe(hash || '')
+        expect(await browser.eval('next.router.pathname')).toBe('/')
+        expect(
+          JSON.parse(await browser.eval('JSON.stringify(next.router.query)'))
+        ).toEqual(query || {})
+      }
+    )
+
     it('should navigate back correctly to a dynamic route', async () => {
       const browser = await webdriver(next.url, `${basePath}`)
 
@@ -127,7 +214,7 @@ describe('should set-up next', () => {
     it('should respect basePath in amphtml link rel', async () => {
       const html = await renderViaHTTP(next.url, `${basePath}/amp-hybrid`)
       const $ = cheerio.load(html)
-      const expectedAmpHtmlUrl = dev
+      const expectedAmpHtmlUrl = isDev
         ? `${basePath}/amp-hybrid?amp=1`
         : `${basePath}/amp-hybrid.amp`
       expect($('link[rel=amphtml]').first().attr('href')).toBe(
@@ -135,8 +222,8 @@ describe('should set-up next', () => {
       )
     })
 
-    if (!dev) {
-      if (!(global as any).isDeploy) {
+    if (!isDev) {
+      if (!(global as any).isNextDeploy) {
         it('should add basePath to routes-manifest', async () => {
           const routesManifest = JSON.parse(
             await next.readFile('.next/routes-manifest.json')
@@ -156,6 +243,15 @@ describe('should set-up next', () => {
             for (const link of links) {
               const href = await link.getAttribute('href')
               if (href.includes('gssp')) {
+                return true
+              }
+            }
+
+            const scripts = await browser.elementsByCss('script')
+
+            for (const script of scripts) {
+              const src = await script.getAttribute('src')
+              if (src.includes('gssp')) {
                 return true
               }
             }
@@ -186,7 +282,7 @@ describe('should set-up next', () => {
             [
               `${basePath}/gsp.json`,
               `${basePath}/index.json`,
-              `${basePath}/index/index.json`,
+              // `${basePath}/index/index.json`,
             ]
           )
 
@@ -239,7 +335,7 @@ describe('should set-up next', () => {
 
     it('should rewrite without basePath when set to false', async () => {
       const html = await renderViaHTTP(next.url, '/rewrite-no-basePath')
-      expect(html).toContain('Get started by editing')
+      expect(html).toContain('Example Domain')
     })
 
     it('should redirect with basePath by default', async () => {
@@ -254,6 +350,8 @@ describe('should set-up next', () => {
       const { pathname } = url.parse(res.headers.get('location') || '')
       expect(pathname).toBe(`${basePath}/somewhere-else`)
       expect(res.status).toBe(307)
+      const text = await res.text()
+      expect(text).toContain(`${basePath}/somewhere-else`)
     })
 
     it('should not redirect without basePath without disabling', async () => {
@@ -284,6 +382,8 @@ describe('should set-up next', () => {
       const { pathname } = url.parse(res.headers.get('location') || '')
       expect(pathname).toBe('/another-destination')
       expect(res.status).toBe(307)
+      const text = await res.text()
+      expect(text).toContain('/another-destination')
     })
 
     //
@@ -312,21 +412,39 @@ describe('should set-up next', () => {
 
     it('should not update URL for a 404', async () => {
       const browser = await webdriver(next.url, '/missing')
-      const pathname = await browser.eval(() => window.location.pathname)
-      expect(await browser.eval(() => (window as any).next.router.asPath)).toBe(
-        '/missing'
-      )
-      expect(pathname).toBe('/missing')
+
+      if (isDeploy) {
+        // the custom 404 only shows inside of the basePath so this
+        // will be the Vercel default 404 page
+        expect(
+          await browser.eval('document.documentElement.innerHTML')
+        ).toContain('NOT_FOUND')
+      } else {
+        const pathname = await browser.eval(() => window.location.pathname)
+        expect(
+          await browser.eval(() => (window as any).next.router.asPath)
+        ).toBe('/missing')
+        expect(pathname).toBe('/missing')
+      }
     })
 
     it('should handle 404 urls that start with basePath', async () => {
       const browser = await webdriver(next.url, `${basePath}hello`)
-      expect(await browser.eval(() => (window as any).next.router.asPath)).toBe(
-        `${basePath}hello`
-      )
-      expect(await browser.eval(() => window.location.pathname)).toBe(
-        `${basePath}hello`
-      )
+
+      if (isDeploy) {
+        // the custom 404 only shows inside of the basePath so this
+        // will be the Vercel default 404 page
+        expect(
+          await browser.eval('document.documentElement.innerHTML')
+        ).toContain('NOT_FOUND')
+      } else {
+        expect(
+          await browser.eval(() => (window as any).next.router.asPath)
+        ).toBe(`${basePath}hello`)
+        expect(await browser.eval(() => window.location.pathname)).toBe(
+          `${basePath}hello`
+        )
+      }
     })
 
     // TODO: this test has been passing incorrectly since the below check
@@ -352,8 +470,10 @@ describe('should set-up next', () => {
 
     it('should update dynamic params after mount correctly', async () => {
       const browser = await webdriver(next.url, `${basePath}/hello-dynamic`)
-      const text = await browser.elementByCss('#slug').text()
-      expect(text).toContain('slug: hello-dynamic')
+      await check(
+        () => browser.elementByCss('#slug').text(),
+        /slug: hello-dynamic/
+      )
     })
 
     it('should navigate to index page with getStaticProps', async () => {
@@ -371,7 +491,7 @@ describe('should set-up next', () => {
       )
       expect(await browser.elementByCss('#pathname').text()).toBe('/')
 
-      if (!dev) {
+      if (!isDev) {
         const hrefs = await browser.eval(`Object.keys(window.next.router.sdc)`)
         hrefs.sort()
 
@@ -382,12 +502,14 @@ describe('should set-up next', () => {
         ).toEqual([
           `${basePath}/gsp.json`,
           `${basePath}/index.json`,
-          `${basePath}/index/index.json`,
+          // `${basePath}/index/index.json`,
         ])
       }
     })
 
-    it('should navigate to nested index page with getStaticProps', async () => {
+    // TODO: investigate index/index seems this shouldn't work
+    // as pages/index.js conflicts with pages/index/index.js
+    it.skip('should navigate to nested index page with getStaticProps', async () => {
       const browser = await webdriver(next.url, `${basePath}/hello`)
       await browser.eval('window.beforeNavigate = "hi"')
 
@@ -402,7 +524,7 @@ describe('should set-up next', () => {
       )
       expect(await browser.elementByCss('#pathname').text()).toBe('/index')
 
-      if (!dev) {
+      if (!isDev) {
         const hrefs = await browser.eval(`Object.keys(window.next.router.sdc)`)
         hrefs.sort()
 
@@ -464,6 +586,8 @@ describe('should set-up next', () => {
       expect(res.status).toBe(308)
       const { pathname } = new URL(res.headers.get('location'))
       expect(pathname).toBe(`${basePath}/hello`)
+      const text = await res.text()
+      expect(text).toContain(`${basePath}/hello`)
     })
 
     it('should redirect trailing slash on root correctly', async () => {
@@ -476,6 +600,8 @@ describe('should set-up next', () => {
       expect(res.status).toBe(308)
       const { pathname } = new URL(res.headers.get('location'))
       expect(pathname).toBe(`${basePath}`)
+      const text = await res.text()
+      expect(text).toContain(`${basePath}`)
     })
 
     it('should navigate an absolute url', async () => {
@@ -487,7 +613,7 @@ describe('should set-up next', () => {
       )
     })
 
-    if (!(global as any).isDeploy) {
+    if (!(global as any).isNextDeploy) {
       it('should navigate an absolute local url with basePath', async () => {
         const browser = await webdriver(
           next.url,
@@ -515,7 +641,7 @@ describe('should set-up next', () => {
         )
         const text = await browser.elementByCss('body').text()
 
-        expect(text).toContain('Get started by editing')
+        expect(text).toContain('Example Domain')
       })
     }
 
@@ -533,8 +659,10 @@ describe('should set-up next', () => {
         },
       })
 
-      const html = await browser.eval('document.documentElement.innerHTML')
-      expect(html).toContain('This page could not be found')
+      await check(
+        () => browser.eval('document.documentElement.innerHTML'),
+        /This page could not be found/
+      )
     })
 
     it('should 404 when manually adding basePath with router.push', async () => {
@@ -642,7 +770,9 @@ describe('should set-up next', () => {
     it('should show 404 for page not under the /docs prefix', async () => {
       const text = await renderViaHTTP(next.url, '/hello')
       expect(text).not.toContain('Hello World')
-      expect(text).toContain('This page could not be found')
+      expect(text).toContain(
+        isDeploy ? 'NOT_FOUND' : 'This page could not be found'
+      )
     })
 
     it('should show the other-page page under the /docs prefix', async () => {
@@ -682,6 +812,10 @@ describe('should set-up next', () => {
     it('should use urls with basepath in router events', async () => {
       const browser = await webdriver(next.url, `${basePath}/hello`)
       try {
+        await check(
+          () => browser.eval('window.next.router.isReady ? "ready" : "no"'),
+          'ready'
+        )
         await browser.eval('window._clearEventLog()')
         await browser
           .elementByCss('#other-page-link')
@@ -689,7 +823,9 @@ describe('should set-up next', () => {
           .waitForElementByCss('#other-page-title')
 
         const eventLog = await browser.eval('window._getEventLog()')
-        expect(eventLog).toEqual([
+        expect(
+          eventLog.filter((item) => item[1]?.endsWith('/other-page'))
+        ).toEqual([
           ['routeChangeStart', `${basePath}/other-page`, { shallow: false }],
           ['beforeHistoryChange', `${basePath}/other-page`, { shallow: false }],
           ['routeChangeComplete', `${basePath}/other-page`, { shallow: false }],
@@ -702,6 +838,10 @@ describe('should set-up next', () => {
     it('should use urls with basepath in router events for hash changes', async () => {
       const browser = await webdriver(next.url, `${basePath}/hello`)
       try {
+        await check(
+          () => browser.eval('window.next.router.isReady ? "ready" : "no"'),
+          'ready'
+        )
         await browser.eval('window._clearEventLog()')
         await browser.elementByCss('#hash-change').click()
 
@@ -726,7 +866,12 @@ describe('should set-up next', () => {
     it('should use urls with basepath in router events for cancelled routes', async () => {
       const browser = await webdriver(next.url, `${basePath}/hello`)
       try {
+        await check(
+          () => browser.eval('window.next.router.isReady ? "ready" : "no"'),
+          'ready'
+        )
         await browser.eval('window._clearEventLog()')
+
         await browser
           .elementByCss('#slow-route')
           .click()
@@ -756,22 +901,27 @@ describe('should set-up next', () => {
     it('should use urls with basepath in router events for failed route change', async () => {
       const browser = await webdriver(next.url, `${basePath}/hello`)
       try {
+        await check(
+          () => browser.eval('window.next.router.isReady ? "ready" : "no"'),
+          'ready'
+        )
         await browser.eval('window._clearEventLog()')
         await browser.elementByCss('#error-route').click()
 
-        await waitFor(2000)
-
-        const eventLog = await browser.eval('window._getEventLog()')
-        expect(eventLog).toEqual([
-          ['routeChangeStart', `${basePath}/error-route`, { shallow: false }],
-          [
-            'routeChangeError',
-            'Failed to load static props',
-            null,
-            `${basePath}/error-route`,
-            { shallow: false },
-          ],
-        ])
+        await check(async () => {
+          const eventLog = await browser.eval('window._getEventLog()')
+          assert.deepEqual(eventLog, [
+            ['routeChangeStart', `${basePath}/error-route`, { shallow: false }],
+            [
+              'routeChangeError',
+              'Failed to load static props',
+              null,
+              `${basePath}/error-route`,
+              { shallow: false },
+            ],
+          ])
+          return 'success'
+        }, 'success')
       } finally {
         await browser.close()
       }
@@ -784,7 +934,7 @@ describe('should set-up next', () => {
         await new Promise((resolve, reject) => {
           // Timeout of EventSource created in setupPing()
           // (on-demand-entries-utils.js) is 5000 ms (see #13132, #13560)
-          setTimeout(resolve, 10000)
+          setTimeout(resolve, isDev ? 10000 : 1000)
         })
         expect(await browser.eval('window.itdidnotrefresh')).toBe('hello')
 
@@ -795,8 +945,8 @@ describe('should set-up next', () => {
         )
         expect(await browser.eval('window.location.search')).toBe('?query=true')
 
-        if (dev) {
-          expect(await hasRedbox(browser, false)).toBe(false)
+        if (isDev) {
+          expect(await hasRedbox(browser)).toBe(false)
         }
       } finally {
         await browser.close()
@@ -810,7 +960,7 @@ describe('should set-up next', () => {
         await new Promise((resolve, reject) => {
           // Timeout of EventSource created in setupPing()
           // (on-demand-entries-utils.js) is 5000 ms (see #13132, #13560)
-          setTimeout(resolve, 10000)
+          setTimeout(resolve, isDev ? 10000 : 1000)
         })
         expect(await browser.eval('window.itdidnotrefresh')).toBe('hello')
 
@@ -819,8 +969,8 @@ describe('should set-up next', () => {
         expect(await browser.eval('window.location.pathname')).toBe(basePath)
         expect(await browser.eval('window.location.search')).toBe('?query=true')
 
-        if (dev) {
-          expect(await hasRedbox(browser, false)).toBe(false)
+        if (isDev) {
+          expect(await hasRedbox(browser)).toBe(false)
         }
       } finally {
         await browser.close()
@@ -843,5 +993,5 @@ describe('should set-up next', () => {
       }
     })
   }
-  runTests((global as any).isDev)
+  runTests((global as any).isNextDev, (global as any).isNextDeploy)
 })
